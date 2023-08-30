@@ -1,0 +1,72 @@
+var roi = 
+    /* color: #d63000 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[113.93595430697225, 22.56691260106463],
+          [113.93183443392537, 22.573570179773032],
+          [113.93046114290975, 22.57959342627027],
+          [113.93183443392537, 22.59163912931484],
+          [113.93217775667928, 22.60590241497646],
+          [113.92840120638631, 22.612558109089775],
+          [113.922221396816, 22.62016422233972],
+          [113.9167282327535, 22.626819226330507],
+          [113.91295168246053, 22.633473908147504],
+          [113.91054842318319, 22.64234631594941],
+          [113.90986177767537, 22.64709915583897],
+          [113.90402529085897, 22.651851831238826],
+          [113.89887544955037, 22.656604342122023],
+          [113.88582918490194, 22.654703357512474],
+          [113.87175295199178, 22.652802346577666],
+          [113.86866304720662, 22.65090130931933],
+          [113.86694643343709, 22.642980037437567],
+          [113.86248323763631, 22.630938829258294],
+          [113.85836336458944, 22.629671272277673],
+          [113.856303428066, 22.62460092746033],
+          [113.86591646517537, 22.622382592795823],
+          [113.88102266634725, 22.61350889624934],
+          [113.88857576693319, 22.602415970523435],
+          [113.90368196810506, 22.591956107273713],
+          [113.91535494173787, 22.578642404852825],
+          [113.92462465609334, 22.569131829693927],
+          [113.93011782015584, 22.56310812602002],
+          [113.93835756624959, 22.562474036640392]]]);
+var roi: Polygon, 28 vertices
+
+////DOWNLOAD IMAGES
+//Year1
+var l8_2016=ee.ImageCollection('LANDSAT/LC08/C01/T1_TOA')
+              .filterDate('2016-01-01','2016-12-31')
+              .filterBounds(roi);
+var l8_2016_median=l8_2016.median()
+                          .clip(roi);
+
+var ndvi_2016=l8_2016_median.normalizedDifference(['B5','B4']);
+var ndviParams = {min: -1, max: 1, palette: ['red', 'yellow', 'green']};
+Map.addLayer(roi,{},'ROI')
+Map.centerObject(roi,12)
+Map.addLayer(ndvi_2016, ndviParams, "2016 NDVI");
+
+//Year2
+
+var l8_2017=ee.ImageCollection('LANDSAT/LC08/C01/T1_TOA')
+              .filterDate('2017-01-01','2017-12-31')
+              .filterBounds(roi);
+var l8_2017_median=l8_2017.median()
+                          .clip(roi);
+var ndvi_2017=l8_2017_median.normalizedDifference(['B5','B4']);
+var ndviParams = {min: -1, max: 1, palette: ['red', 'yellow', 'green']};
+Map.addLayer(ndvi_2017, ndviParams, "2017 NDVI");
+
+
+//Change detection
+var change_ndvi=ndvi_2016.subtract(ndvi_2017)
+var ndvidiff = {min: -1, max: 1, palette: ['blue', 'white', 'green']};
+Map.addLayer(change_ndvi,ndvidiff,"NDVI_change");
+
+//Filtering pixel value
+var low_ndvi= change_ndvi.lt(0);
+var lowNDVI = change_ndvi.updateMask(low_ndvi);
+Map.addLayer(lowNDVI,ndvidiff,"Low NDVI");
+var high_ndvi=change_ndvi.gt(0);
+var highNDVI = change_ndvi.updateMask(high_ndvi);
+Map.addLayer(highNDVI,ndvidiff,"High NDVI");
