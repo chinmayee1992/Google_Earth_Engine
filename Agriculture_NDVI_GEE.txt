@@ -1,0 +1,82 @@
+/// Import your own studyarea
+
+
+////DOWNLOAD IMAGES
+//Year1
+var l8_2016=ee.ImageCollection('LANDSAT/LC08/C01/T1_TOA')
+              .filterDate('2016-01-01','2016-12-31')
+              .filterBounds(roi);
+var l8_2016_median=l8_2016.median()
+                          .clip(roi);
+print(l8_2016)
+var ndvi_2016=l8_2016_median.normalizedDifference(['B5','B4']);
+var ndviParams = {min: -1, max: 1, palette: ['red', 'yellow', 'green']};
+Map.addLayer(roi,{},'ROI')
+Map.centerObject(roi,12)
+Map.addLayer(ndvi_2016, ndviParams, "2016 NDVI");
+
+//Year2
+
+var l8_2017=ee.ImageCollection('LANDSAT/LC08/C01/T1_TOA')
+              .filterDate('2017-01-01','2017-12-31')
+              .filterBounds(roi);
+var l8_2017_median=l8_2017.median()
+                          .clip(roi);
+var ndvi_2017=l8_2017_median.normalizedDifference(['B5','B4']);
+var ndviParams = {min: -1, max: 1, palette: ['red', 'yellow', 'green']};
+Map.addLayer(ndvi_2017, ndviParams, "2017 NDVI");
+
+
+//Change detection
+var change_ndvi=ndvi_2016.subtract(ndvi_2017)
+var ndvidiff = {min: -1, max: 1, palette: ['blue', 'white', 'green']};
+Map.addLayer(change_ndvi,ndvidiff,"NDVI_change");
+
+//Filtering pixel value
+var low_ndvi= change_ndvi.lt(0);
+var lowNDVI = change_ndvi.updateMask(low_ndvi);
+Map.addLayer(lowNDVI,ndvidiff,"Low NDVI");
+var high_ndvi=change_ndvi.gt(0);
+var highNDVI = change_ndvi.updateMask(high_ndvi);
+Map.addLayer(highNDVI,ndvidiff,"High NDVI");
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//Calculating statistics of NDVI
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+var MeansOfFeatures = ndvi_2016.reduceRegions({
+  collection: roi,
+  reducer: ee.Reducer.mean(),
+  scale: 250,
+});
+
+var MedianOfFeatures = ndvi_2016.reduceRegions({
+  collection: roi,
+  reducer: ee.Reducer.median(),
+  scale: 250,
+});
+
+var CountOfFeatures = ndvi_2016.reduceRegions({
+  collection: roi,
+  reducer: ee.Reducer.count(),
+  scale: 250,
+});
+
+var MinOfFeatures = ndvi_2016.reduceRegions({
+  collection: roi,
+  reducer: ee.Reducer.min(),
+  scale: 250,
+});
+
+var MaxOfFeatures = ndvi_2016.reduceRegions({
+  collection: roi,
+  reducer: ee.Reducer.max(),
+  scale: 250,
+});
+
+print(ee.Feature(MeansOfFeatures.first()))
+print(ee.Feature(MedianOfFeatures.first()))
+print(ee.Feature(CountOfFeatures.first()))
+print(ee.Feature(MinOfFeatures.first()))
+print(ee.Feature(MaxOfFeatures.first()))
