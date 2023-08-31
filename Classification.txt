@@ -1,0 +1,89 @@
+Import your location
+
+var  urba: FeatureCollection
+var forest:FeatureCollection
+var water: FeatureCollection
+//////////////////////////////////////////////////////////////////////////
+var image = ee.Image(ee.ImageCollection('LANDSAT/LC08/C01/T1_SR')
+    .filterBounds(roi)
+    .filterDate('2016-05-01', '2016-06-30')
+    .sort('CLOUD_COVER')
+    .first());
+
+//Map.addLayer(image, {bands: ['B4', 'B3', 'B2'],min:0, max: 3000}, 'True colour image');
+
+// False colour visualization
+//Define false-colour visualization parameters.
+    var falseColour = {
+        bands: ["B5", "B4", "B3"],
+        min: 0,
+        max: 3000
+        };
+// Add the image to the map, using the visualization parameters.
+//Map.addLayer(image, falseColour, "false-color composite");
+
+// Merge into one featurecollection
+
+//var classNames=urban.merge(forest).merge(water);
+
+// Print the classname
+//print(classNames)
+
+// Create training data
+//var bands = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+//var training = image.select(bands).sampleRegions({
+//  collection: classNames,
+//  properties: ['landcover'],
+//  scale: 30
+//});
+
+//print(training);
+
+
+
+
+// Train the classifier
+//var classifier = ee.Classifier.cart().train({
+  //features: training,
+  //classProperty: 'landcover',
+  //inputProperties: bands
+//});
+
+// Run the classifion
+//var classified = image.select(bands).classify(classifier);
+
+//Display classification
+//Map.centerObject(classNames, 11);
+//Map.addLayer(classified,{min: 0, max: 3, palette: ['red', 'blue', 'green','yellow']},'classification');
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+//Filter image collection for time window, spatial location, and cloud cover
+var image = ee.Image(ee.ImageCollection('LANDSAT/LC08/C01/T1_SR')
+    .filterBounds(roi)
+    .filterDate('2016-05-01', '2016-06-30')
+    .sort('CLOUD_COVER')
+    .first());
+//Add true-clour composite to map
+Map.addLayer(image, {bands: ['B4', 'B3', 'B2'],min:0, max: 3000}, 'True colour image');
+//Merge features into one FeatureCollection
+var classNames = urban.merge(water).merge(forest);
+//Select bands to use
+var bands = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+//Sample the reflectance values for each training point
+var training = image.select(bands).sampleRegions({
+  collection: classNames,
+  properties: ['landcover'],
+  scale: 30
+});
+//Train the classifier - in this case using a CART regression tree
+var classifier = ee.Classifier.smileCart().train(training, 'landcover', bands);
+//Run the classification
+var classified = image.select(bands).classify(classifier);
+
+//Display the classification map
+Map.centerObject(classNames, 11);
+Map.addLayer(classified,
+{min: 0, max: 2, palette: ['red', 'green','blue']},
+'classification');
+
+
