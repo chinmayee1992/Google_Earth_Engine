@@ -1,0 +1,329 @@
+// IMPORT AND VISUALIZE SURFACE WATER MASK.
+// Surface water occurrence dataset from the JRC (Pekel et al., 2016).
+var jrcYearly=ee.ImageCollection('JRC/GSW1_3/YearlyHistory');
+// Select the seasonal and permanent pixels image representing the year 2000
+var watermask=jrcYearly.filter(ee.Filter.eq('year', 2000)).first()
+   .gte(2).unmask(0)
+   .clip(aoi);
+Map.centerObject(aoi);
+Map.addLayer(ee.Image.constant(0),{
+   min: 0,
+   palette: ['black']
+}, 'bg', false);
+Map.addLayer(watermask,{}, 'watermask', false);
+// REMOVE NOISE AND SMALL ISLANDS TO SIMPLIFY THE TOPOLOGY.
+// a. Image closure operation to fill small holes.
+watermask=watermask.focal_max().focal_min();
+// b. Identify small bars and fill them in to create a filled water mask.
+var MIN_SIZE=2E3;
+var barPolys=watermask.not().selfMask()
+   .reduceToVectors({
+       geometry: aoi,
+       scale: 30,
+       eightConnected: true
+   })
+   .filter(ee.Filter.lte('count', MIN_SIZE)); // Get small polys.
+var filled=watermask.paint(barPolys, 1);
+//Map.addLayer(rpj(filled),{
+  // min: 0,
+   //max: 1
+//}, 'filled water mask', false);
+// IDENTIFYING RIVERS FROM OTHER TYPES OF WATER BODIES.
+// Cumulative cost mapping to find pixels connected to a reference centerline.
+var costmap=filled.not().cumulativeCost({
+   source: watermask.and(ee.Image().toByte().paint(sword,
+       1)),
+   maxDistance: 3E3,
+   geodeticDistance: false
+});
+var rivermask=costmap.eq(0).rename('riverMask');
+var channelmask=rivermask.and(watermask);
+Map.addLayer(sword,{
+   color: 'red'
+}, 'sword', false);
+Map.addLayer(rpj(costmap),{
+   min: 0,
+   max: 1E3
+}, 'costmap', false);
+Map.addLayer(rpj(rivermask),{}, 'rivermask', false);
+Map.addLayer(rpj(channelmask),{}, 'channelmask', false);
+// Import existing functions from RivWidthCloud.
+var riverFunctions=require(
+   'users/eeProject/RivWidthCloudPaper:functions_river.js');
+var clFunctions=require(
+   'users/eeProject/RivWidthCloudPaper:functions_centerline_width.js'
+   );
+//Calculate distance from shoreline using distance transform.
+var distance=clFunctions.CalcDistanceMap(rivermask, 256, scale);
+Map.addLayer(rpj(distance),{
+   min: 0,
+   max: 500
+}, 'distance raster', false);
+// Calculate gradient of the distance raster.
+// There are three different ways (kernels) to calculate the gradient.
+// By default, the function used the second approach.
+// For details on the kernels, please see the source code for this function.
+var gradient=clFunctions.CalcGradientMap(distance, 2, scale);
+Map.addLayer(rpj(gradient),{}, 'gradient raster', false);
+// Threshold the gradient raster and derive 1px width centerline using skeletonization.
+var centerlineRaw=clFunctions.CalcOnePixelWidthCenterline(rivermask,
+   gradient, 0.9);
+var raw1pxCenterline=rpj(centerlineRaw).eq(1).selfMask();
+Map.addLayer(raw1pxCenterline,{
+   palette: ['red']
+}, 'raw 1px centerline', false);
+// Prune the centerline to remove spurious branches.
+var MAXDISTANCE_BRANCH_REMOVAL=500;
+// Note: the last argument of the CleanCenterline function enables removal of the pixels so that the resulting centerline will have 1px width in an 8-connected way. Once it is done, it doesn’t need to be done the second time (thus it equals false)
+var cl1px=clFunctions
+   .CleanCenterline(centerlineRaw, MAXDISTANCE_BRANCH_REMOVAL, true);
+var cl1px=clFunctions
+   .CleanCenterline(cl1px, MAXDISTANCE_BRANCH_REMOVAL, false);
+var final1pxCenterline=rpj(cl1px).eq(1).selfMask();
+Map.addLayer(final1pxCenterline,{
+   palette: ['red']
+}, 'final 1px centerline', false);
+// Calculate perpendicular direction for the cleaned centerline.
+var angle=clFunctions.CalculateAngle(cl1px);
+var angleVis={
+   min: 0,
+   max: 360,
+   palette: ['#ffffd4', '#fed98e', '#fe9929', '#d95f0e',
+       '#993404'
+   ]
+};
+Map.addLayer(rpj(angle), angleVis, 'cross-sectional directions',
+   false);
+// Estimate width.
+var rwcFunction=require(
+   'users/eeProject/RivWidthCloudPaper:rwc_watermask.js');
+var rwc=rwcFunction.rwGen_waterMask(4000, 333, 500, aoi);
+watermask=ee.Image(watermask.rename(['waterMask']).setMulti({
+   crs: crs,
+   scale: 30,
+   image_id: 'aoi'
+}));
+var widths=rwc(watermask);
+print('example width output', widths.first());
+var bankMask=channelmask.focal_max(1).neq(channelmask);
+var bankDistance=channelmask.not().cumulativeCost({
+   source: channelmask,
+   maxDistance: 1E2,
+   geodeticDistance: false
+});
+var bankAspect=ee.Terrain.aspect(bankDistance)
+   .multiply(Math.PI).divide(180)
+   .mask(bankMask).rename('bankAspect');
+var distanceKernel=ee.Kernel.euclidean({
+   radius: 30,
+   units: 'meters',
+   magnitude: 0.5
+});
+var bankLength=bankMask.convolve(distanceKernel)
+   .mask(bankMask).rename('bankLength');
+var radianVis={
+   min: 0,
+   max: 2 * Math.PI,
+   palette: ['red', 'yellow', 'green', 'teal', 'blue', 'magenta',
+       'red'
+   ]
+};
+Map.addLayer(rpj(bankAspect), radianVis, 'bank aspect', false);
+Map.addLayer(rpj(bankLength),{
+   min: 0,
+   max: 60
+}, 'bank length', false);
+var getUTMProj=function(lon, lat){
+   // Given longitude and latitude in decimal degrees,
+   // return EPSG string for the corresponding UTM projection. See:
+   // https://apollomapping.com/blog/gtm-finding-a-utm-zone-number-easily
+   // https://sis.apache.org/faq.html
+   var utmCode=ee.Number(lon).add(180).divide(6).ceil().int();
+   var output=ee.Algorithms.If({
+       condition: ee.Number(lat).gte(0),
+       trueCase: ee.String('EPSG:326').cat(utmCode
+           .format('%02d')),
+       falseCase: ee.String('EPSG:327').cat(utmCode
+           .format('%02d'))
+   });
+   return (output);
+};
+// IMPORT AND VISUALIZE SURFACE WATER MASK
+// Surface water occurrence dataset from the JRC (Pekel et al., 2016).
+var jrcYearly=ee.ImageCollection('JRC/GSW1_3/YearlyHistory');
+var poi=ee.Geometry.LineString([
+   [110.77450764660864, 30.954167027937988],
+   [110.77158940320044, 30.950633845897112]
+]);
+var rwcFunction=require(
+   'users/eeProject/RivWidthCloudPaper:rwc_watermask.js');
+ // Function to identify the nearest river width to a given location.
+var GetNearestClGen=function(poi){
+   var temp=function(widths) {
+       widths=widths.map(function(f){
+           return f.set('dist2cl', f.distance(poi,
+               30));
+       });
+
+       return ee.Feature(widths.sort('dist2cl', true)
+           .first());
+   };
+   return temp;
+};
+var getNearestCl=GetNearestClGen(poi);  
+// Multitemporal width extraction.
+var polygon=poi.buffer(2000);
+var coords=poi.centroid().coordinates();
+var lon=coords.get(0);
+var lat=coords.get(1);
+var crs=getUTMProj(lon, lat);
+var scale=ee.Number(30);
+
+var multiwidths=ee.FeatureCollection(jrcYearly.map(function(i){
+   var watermask=i.gte(2).unmask(0);
+
+   watermask=ee.Image(watermask.rename(['waterMask'])
+       .setMulti({
+           crs: crs,
+           scale: scale,
+           image_id: i.getNumber('year')
+       }));
+   var rwc=rwcFunction.rwGen_waterMask(2000, 333, 300,
+       polygon);
+   var widths=rwc(watermask)
+       .filter(ee.Filter.eq('endsInWater', 0))
+       .filter(ee.Filter.eq('endsOverEdge', 0));
+
+   return ee.Algorithms.If(widths.size(), getNearestCl(
+       widths), null);
+}, true));
+var widthTs=ui.Chart.feature.byFeature(multiwidths, 'image_id', [
+       'width'
+   ])
+   .setOptions({
+       hAxis:{
+           title: 'Year',
+           format: '####'
+       },
+       vAxis:{
+           title: 'Width (meter)'
+       },
+       title: 'River width time series upstream of the Three Gorges Dam'
+   });
+print(widthTs);
+Map.centerObject(polygon);
+Map.addLayer(polygon,{}, 'area of width calculation');
+var masks1=makeChannelmask(2015);
+var masks2=makeChannelmask(2020);
+Map.centerObject(aoi, 13);
+var year1mask=rpj(masks1.select('channelmask').selfMask());
+Map.addLayer(year1mask,{
+   palette: ['blue']
+}, 'year 1');
+var year2mask=rpj(masks2.select('channelmask').selfMask());
+Map.addLayer(year2mask,{
+   palette: ['red']
+}, 'year 2', true, 0.5);
+// Pixels that are now the river channel but were previously land.
+var erosion=masks2.select('channelmask')
+   .and(masks1.select('watermask').not()).rename('erosion');
+Map.addLayer(rpj(erosion).selfMask(),{}, 'erosion', false);
+// Erosion distance assuming the shortest distance between banks.
+var erosionEndpoints=erosion.focal_max(1).and(masks2.select(
+   'bankMask'));
+var erosionDistance=erosion.focal_max(1).selfMask()
+   .cumulativeCost({
+       source: erosionEndpoints,
+       maxDistance: 1E3,
+       geodeticDistance: true
+   }).rename('erosionDistance');
+Map.addLayer(rpj(erosionDistance),
+   {
+       min: 0,
+       max: 300
+   },
+   'erosion distance',
+   false);
+// Direction of the erosion following slope of distance.
+var erosionDirection=ee.Terrain.aspect(erosionDistance)
+   .multiply(Math.PI).divide(180)
+   .clip(aoi)
+   .rename('erosionDirection');
+erosionDistance=erosionDistance.mask(erosion);
+Map.addLayer(rpj(erosionDirection),
+   {
+       min: 0,
+       max: Math.PI
+   },
+   'erosion direction',
+   false);
+// Distance to nearest SWORD centerline point.
+var distance=sword.distance(2E3).clip(aoi);
+// Second derivatives of distance.
+// Finding the 0s identifies boundaries between centerline points.
+var concavityBounds=distance.convolve(ee.Kernel.laplacian8())
+   .gte(0).rename('bounds');
+Map.addLayer(rpj(distance),{
+   min: 0,
+   max: 1E3
+}, 'distance', false);
+Map.addLayer(rpj(concavityBounds), {}, 'bounds', false);
+// Reduce the pixels according to the concavity boundaries,
+// and set the value to SWORD node ID.  Note that focalMode is used
+// to fill in the empty pixels that were the boundaries.
+var swordImg=ee.Image(0).paint(sword, 'node_id').rename('node_id')
+   .clip(aoi);
+var nodePixels=concavityBounds.addBands(swordImg)
+   .reduceConnectedComponents({
+       reducer: ee.Reducer.max(),
+       labelBand: 'bounds'
+   }).focalMode({
+       radius: 3,
+       iterations: 2
+   });
+Map.addLayer(rpj(nodePixels).randomVisualizer(),
+   {},
+   'node assignments',
+   false);
+// Set up a custom reducing function to summarize the data.
+var groupReduce=function(dataImg, nodeIds, reducer){
+   // Create a grouped reducer for each band in the data image.
+   var groupReducer=reducer.forEach(dataImg.bandNames())
+       .group({
+           groupField: dataImg.bandNames().length(),
+           groupName: 'node_id'
+       });
+   // Apply the grouped reducer.
+   var statsList=dataImg.addBands(nodeIds).clip(aoi)
+       .reduceRegion({
+           reducer: groupReducer,
+           scale: 30,
+       }).get('groups');
+   // Convert list of dictionaries to FeatureCollection.
+   var statsOut=ee.List(statsList).map(function(dict){
+       return ee.Feature(null, dict);
+   });
+   return ee.FeatureCollection(statsOut);
+};   
+var dataMask=masks1.addBands(masks2).reduce(ee.Reducer
+   .anyNonZero());
+var sumBands=['watermask', 'channelmask', 'bankLength'];
+var sumImg=erosion
+   .addBands(masks1, sumBands)
+   .addBands(masks2, sumBands);
+var sumStats=groupReduce(sumImg, nodePixels, ee.Reducer.sum());
+var angleImg=erosionDirection
+   .addBands(masks1, ['bankAspect'])
+   .addBands(masks2, ['bankAspect']);
+var angleStats=groupReduce(angleImg, nodePixels, ee.Reducer
+   .circularMean());
+var vectorData=sword.filterBounds(aoi).map(function(feat){
+   var nodeFilter=ee.Filter.eq('node_id', feat.get(
+       'node_id'));
+   var sumFeat=sumStats.filter(nodeFilter).first();
+   var angleFeat=angleStats.filter(nodeFilter).first();
+   return feat.copyProperties(sumFeat).copyProperties(
+       angleFeat);
+});
+print(vectorData);
+Map.addLayer(vectorData,{}, 'final data');
