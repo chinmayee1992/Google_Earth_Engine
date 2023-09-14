@@ -1,0 +1,150 @@
+print('The author of this script is MyName.');
+print('I just sent this script to GroupMemberName.');
+print('This script is shared with MyName.');
+print('The owner of this repository is GroupMemberName.');
+exports.cmocean ={
+   Thermal:{
+       7: ['042333', '2c3395', '744992', 'b15f82', 'eb7958',
+           'fbb43d', 'e8fa5b'
+       ]
+   },
+   Haline:{
+       7: ['2a186c', '14439c', '206e8b', '3c9387', '5ab978',
+           'aad85c', 'fdef9a'
+       ]
+   },
+   Solar:{
+       7: ['331418', '682325', '973b1c', 'b66413', 'cb921a',
+           'dac62f', 'e1fd4b'
+       ]
+   },
+   Ice:{
+       7: ['040613', '292851', '3f4b96', '427bb7', '61a8c7',
+           '9cd4da', 'eafdfd'
+       ]
+   },
+   Gray:{
+       7: ['000000', '232323', '4a4a49', '727171', '9b9a9a',
+           'cacac9', 'fffffd'
+       ]
+   },
+   Oxy:{
+       7: ['400505', '850a0b', '6f6f6e', '9b9a9a', 'cbcac9',
+           'ebf34b', 'ddaf19'
+       ]
+   },
+   Deep:{
+       7: ['fdfecc', 'a5dfa7', '5dbaa4', '488e9e', '3e6495',
+           '3f396c', '281a2c'
+       ]
+   },
+   Dense:{
+       7: ['e6f1f1', 'a2cee2', '76a4e5', '7871d5', '7642a5',
+           '621d62', '360e24'
+       ]
+   },
+   Algae:{
+       7: ['d7f9d0', 'a2d595', '64b463', '129450', '126e45',
+           '1a482f', '122414'
+       ]
+   },
+}
+var dem=ee.Image('USGS/SRTMGL1_003');
+var palettes=require('users/gena/packages:palettes');
+// colorbrewer
+Map.addLayer(dem,{
+   min: 0,
+   max: 3000,
+   palette: palettes.colorbrewer.Blues[9]
+}, 'colorbrewer Blues[9]');
+// cmocean
+Map.addLayer(dem,{
+   min: 0,
+   max: 3000,
+   palette: palettes.cmocean.Algae[7]
+}, 'cmocean Algae[7]');
+// This example demonstrates the use of the Landsat 8 Collection 2, Level 2
+// QA_PIXEL band (CFMask) to mask unwanted pixels.
+function maskL8sr(image){
+   // Bit 0 - Fill
+   // Bit 1 - Dilated Cloud
+   // Bit 2 - Cirrus
+   // Bit 3 - Cloud
+   // Bit 4 - Cloud Shadow
+   var qaMask=image.select('QA_PIXEL').bitwiseAnd(parseInt('11111',
+       2)).eq(0);
+   var saturationMask=image.select('QA_RADSAT').eq(0);
+
+   // Apply the scaling factors to the appropriate bands.
+   var opticalBands=image.select('SR_B.').multiply(0.0000275).add(-
+       0.2);
+   var thermalBands=image.select('ST_B.*').multiply(0.00341802)
+       .add(149.0);
+
+   // Replace the original bands with the scaled ones and apply the masks.
+   return image.addBands(opticalBands, null, true)
+       .addBands(thermalBands, null, true)
+       .updateMask(qaMask)
+       .updateMask(saturationMask);
+}
+// Map the function over one year of data.
+var collection=ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+   .filterDate('2020-01-01', '2021-01-01')
+   .map(maskL8sr);
+var composite=collection.median();
+// Display the results.
+Map.setCenter(-4.52, 40.29, 7); // Iberian Peninsula
+Map.addLayer(composite,{
+   bands: ['SR_B4', 'SR_B3', 'SR_B2'],
+   min: 0,
+   max: 0.3
+});
+exports.maskL8sr =function(image){
+   // Bit 0 - Fill
+   // Bit 1 - Dilated Cloud
+   // Bit 2 - Cirrus
+   // Bit 3 - Cloud
+   // Bit 4 - Cloud Shadow
+   var qaMask=image.select('QA_PIXEL').bitwiseAnd(parseInt(
+       '11111', 2)).eq(0);
+   var saturationMask=image.select('QA_RADSAT').eq(0);
+
+   // Apply the scaling factors to the appropriate bands.
+   var opticalBands=image.select('SR_B.').multiply(0.0000275)
+       .add(-0.2);
+   var thermalBands=image.select('ST_B.*').multiply(0.00341802)
+       .add(149.0);
+
+   // Replace the original bands with the scaled ones and apply the masks.
+   return image.addBands(opticalBands, null, true)
+       .addBands(thermalBands, null, true)
+       .updateMask(qaMask)
+       .updateMask(saturationMask);
+}
+// Map the function over one year of data.
+var collection=ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+   .filterDate('2020-01-01', '2021-01-01')
+   .map(maskL8sr);
+var composite=collection.median();
+// Display the results.
+Map.setCenter(-4.52, 40.29, 7); // Iberian Peninsula
+Map.addLayer(composite,{
+   bands: ['SR_B4', 'SR_B3', 'SR_B2'],
+   min: 0,
+   max: 0.3
+});
+// Load the module
+var myCloudFunctions=require(
+   'users/myusername/my-shared-repo:cloudmasking');
+// Map the function over one year of data.
+var collection=ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+   .filterDate('2020-01-01', '2021-01-01')
+   .map(myCloudFunctions.maskL8sr);
+var composite=collection.median();
+// Display the results.
+Map.setCenter(-4.52, 40.29, 7); // Iberian Peninsula
+Map.addLayer(composite,{
+   bands: ['SR_B4', 'SR_B3', 'SR_B2'],
+   min: 0,
+   max: 0.3
+});
