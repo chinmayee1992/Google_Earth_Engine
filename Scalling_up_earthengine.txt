@@ -1,0 +1,235 @@
+// Load county dataset.
+// Filter counties in Indiana, Illinois, and Iowa by state FIPS code.
+// Select only the unique ID column for simplicity.
+var countiesAll=ee.FeatureCollection('TIGER/2018/Counties');
+var states=['17', '18', '19'];
+var uniqueID='GEOID';
+var featColl=countiesAll.filter(ee.Filter.inList('STATEFP', states))
+   .select(uniqueID);
+print(featColl.size());
+print(featColl.limit(1));
+// Visualize target features (create Figure F6.2.1).
+Map.centerObject(featColl, 5);
+Map.addLayer(featColl);
+// specify years of interest
+var startYear=2020;
+var endYear=2020;
+// climate dataset info
+var imageCollectionName='IDAHO_EPSCOR/GRIDMET';
+var bandsWanted=['pr', 'tmmn', 'tmmx'];
+var scale=4000;
+// Load and format climate data.
+var startDate=startYear + '-01-01';
+var endYear_adj=endYear + 1;
+var endDate=endYear_adj + '-01-01';
+var imageCollection=ee.ImageCollection(imageCollectionName)
+   .select(bandsWanted)
+   .filterBounds(featColl)
+   .filterDate(startDate, endDate);
+// get values at features
+var sampledFeatures=imageCollection.map(function(image){
+   return image.reduceRegions({
+           collection: featColl,
+           reducer: ee.Reducer.mean(),
+           scale: scale
+       }).filter(ee.Filter.notNull(
+       bandsWanted)) // drop rows with no data
+       .map(function(f){ // add date property
+           var time_start=image.get(
+               'system:time_start');
+           var dte=ee.Date(time_start).format(
+               'YYYYMMdd');
+           return f.set('date_ymd', dte);
+       });
+}).flatten();
+print(sampledFeatures.limit(1));
+// export info
+var exportFolder='GEE_scalingUp';
+var filename='Gridmet_counties_IN_IL_IA_' + scale + 'm_' +
+   startYear + '-' + endYear;
+// prepare export: specify properties/columns to include
+var columnsWanted=[uniqueID].concat(['date_ymd'], bandsWanted);
+print(columnsWanted);
+Export.table.toDrive({
+   collection: sampledFeatures,
+   description: filename,
+   folder: exportFolder,
+   fileFormat: 'CSV',
+   selectors: columnsWanted
+});
+// Load county dataset.
+var countiesAll=ee.FeatureCollection('TIGER/2018/Counties');
+var states=['17', '18', '19'];
+var uniqueID='GEOID';
+var featColl=countiesAll.filter(ee.Filter.inList('STATEFP', states))
+   .select(uniqueID);
+print(featColl.size());
+print(featColl.limit(1));
+Map.addLayer(featColl);
+// Specify years of interest.
+var startYear=2001;
+var endYear=2020;
+// Climate dataset info.
+var imageCollectionName='IDAHO_EPSCOR/GRIDMET';
+var bandsWanted=['pr', 'tmmn', 'tmmx'];
+var scale=4000;
+// Export info.
+var exportFolder='GEE_scalingUp';
+var filenameBase='Gridmet_counties_IN_IL_IA_' + scale + 'm_';
+// Initiate a loop, in which the variable i takes on values of each year.
+for (var i=startYear; i <=endYear; i++){        // for each year....
+ // Load climate collection for that year.
+ var startDate=i + '-01-01';
+  var endYear_adj=i + 1;
+ var endDate=endYear_adj + '-01-01';
+ var imageCollection=ee.ImageCollection(imageCollectionName)
+     .select(bandsWanted)
+     .filterBounds(featColl)
+     .filterDate(startDate, endDate);
+ // Get values at feature collection.
+ var sampledFeatures=imageCollection.map(function(image){
+   return image.reduceRegions({
+     collection: featColl,
+     reducer: ee.Reducer.mean(),        
+     tileScale: 1,
+     scale: scale
+   }).filter(ee.Filter.notNull(bandsWanted))  // remove rows without data
+     .map(function(f){                  // add date property
+       var time_start=image.get('system:time_start');
+       var dte=ee.Date(time_start).format('YYYYMMdd');
+       return f.set('date_ymd', dte);
+   });
+ }).flatten();
+ // Prepare export: specify properties and filename.
+ var columnsWanted=[uniqueID].concat(['date_ymd'], bandsWanted);
+ var filename=filenameBase + i;
+ Export.table.toDrive({
+   collection: sampledFeatures,
+   description: filename,
+   folder: exportFolder,
+   fileFormat: 'CSV',
+   selectors: columnsWanted
+ });
+}
+// Set the Region of Interest:Seattle, Washington, United States
+var roi=ee.Geometry.Point([-122.33524518034544, 47.61356183942883]);
+// Dates over which to create a median composite.
+var start=ee.Date('2019-03-01');
+var end=ee.Date('2019-09-01');
+// Specify module with cloud mask functions.
+var s2mask_tools=require(
+   'projects/gee-edu/book:Part F - Fundamentals/F6 - Advanced Topics/F6.2 Scaling Up/modules/s2cloudmask.js'
+);
+// Sentinel-2 surface reflectance data for the composite.
+var s2Sr=ee.ImageCollection('COPERNICUS/S2_SR')
+   .filterDate(start, end)
+   .filterBounds(roi)
+   .select(['B2', 'B3', 'B4', 'B5']);
+// Sentinel-2 Level 1C data (top-of-atmosphere).  
+// Bands B7, B8, B8A and B10 needed for CDI and the cloud mask function.
+var s2=ee.ImageCollection('COPERNICUS/S2')
+   .filterBounds(roi)
+   .filterDate(start, end)
+   .select(['B7', 'B8', 'B8A', 'B10']);
+// Cloud probability dataset - used in cloud mask function
+var s2c=ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
+   .filterDate(start, end)
+   .filterBounds(roi);
+// Join the cloud probability dataset to surface reflectance.
+var withCloudProbability=s2mask_tools.indexJoin(s2Sr, s2c,
+   'cloud_probability');
+// Join the L1C data to get the bands needed for CDI.
+var withS2L1C=s2mask_tools.indexJoin(withCloudProbability, s2,
+   'l1c');
+// Map the cloud masking function over the joined collection.
+// Cast output to ImageCollection
+var masked=ee.ImageCollection(withS2L1C.map(s2mask_tools
+.maskImage));
+// Take the median, specifying a tileScale to avoid memory errors.
+var median=masked.reduce(ee.Reducer.median(), 8);
+// Display the results.
+Map.centerObject(roi, 12);
+Map.addLayer(roi);
+var viz={
+   bands: ['B4_median', 'B3_median', 'B2_median'],
+   min: 0,
+   max: 3000
+};
+Map.addLayer(median, viz, 'median');
+Map.centerObject(roi, 9);
+Map.addLayer(roi);
+Map.addLayer(median, viz, 'median');
+// Specify helper functions.
+var s2mask_tools=require(
+   'projects/gee-edu/book:Part F - Fundamentals/F6 - Advanced Topics/F6.2 Scaling Up/modules/s2cloudmask.js'
+);
+// Set the Region of Interest: Washington, USA.
+var roi=ee.FeatureCollection('TIGER/2018/States')
+   .filter(ee.Filter.equals('NAME', 'Washington'));
+// Specify grid size in projection, x and y units (based on projection).
+var projection='EPSG:4326'; // WGS84 lat lon
+var dx=2.5;
+var dy=1.5;
+// Dates over which to create a median composite.
+var start=ee.Date('2019-03-01');
+var end=ee.Date('2019-09-01');
+// Make grid and visualize.
+var proj=ee.Projection(projection).scale(dx, dy);
+var grid=roi.geometry().coveringGrid(proj);
+Map.addLayer(roi,{}, 'roi');
+Map.addLayer(grid,{}, 'grid');
+// Export info.
+var assetCollection='path/to/your/asset/s2_composite_WA';
+var imageBaseName='S2_median_';
+// Get a list based on grid number.
+var gridSize=grid.size().getInfo();
+var gridList=grid.toList(gridSize)
+// In each grid cell, export a composite
+for (var i=0; i < gridSize; i++){
+   // Extract grid polygon and filter S2 datasets for this region.
+   var gridCell=ee.Feature(gridList.get(i)).geometry();
+   var s2Sr=ee.ImageCollection('COPERNICUS/S2_SR')
+       .filterDate(start, end)
+       .filterBounds(gridCell)
+       .select(['B2', 'B3', 'B4', 'B5']);
+   var s2=ee.ImageCollection('COPERNICUS/S2')
+       .filterDate(start, end)
+       .filterBounds(gridCell)
+       .select(['B7', 'B8', 'B8A', 'B10']);
+   var s2c=ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
+       .filterDate(start, end)
+       .filterBounds(gridCell);
+   // Apply the cloud mask.
+   var withCloudProbability=s2mask_tools.indexJoin(s2Sr, s2c,
+       'cloud_probability');
+   var withS2L1C=s2mask_tools.indexJoin(withCloudProbability, s2,
+       'l1c');
+   var masked=ee.ImageCollection(withS2L1C.map(s2mask_tools
+       .maskImage));
+   // Generate a median composite and export.
+   var median=masked.reduce(ee.Reducer.median(), 8);
+   // Export.
+   var imagename=imageBaseName + 'tile' + i;
+   Export.image.toAsset({
+       image: median,
+       description: imagename,
+       assetId: assetCollection + '/' + imagename,
+       scale: 10,
+       region: gridCell,
+       maxPixels: 1e13
+   });
+}
+// load image collection and mosaic into single image
+var assetCollection='projects/gee-book/assets/F6-2/s2_composite_WA';
+var composite=ee.ImageCollection(assetCollection).mosaic();
+// Display the results
+var geometry=ee.Geometry.Point([-120.5873563817392,
+   47.39035206888694
+]);
+Map.centerObject(geometry, 6);
+var vizParams={
+   bands: ['B4_median', 'B3_median', 'B2_median'],
+   min: 0,
+   max: 3000
+};
+Map.addLayer(composite, vizParams, 'median');
