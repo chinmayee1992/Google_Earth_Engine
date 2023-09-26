@@ -1,0 +1,49 @@
+// Load Area of Interest
+var aoi=ee.FeatureCollection('FAO/GAUL/2015/level1')
+          .filter(ee.Filter.eq('ADM0_NAME', 'Hong Kong'));
+print(aoi)
+Map.centerObject(aoi,11);
+Map.addLayer(aoi,{}, 'Hong Kong');
+
+var LC = ee.ImageCollection('ESA/WorldCover/v200').first();
+// Function to clip an image from the collection and set the year
+var clipCol=function(img){
+   var date=ee.String(img.get('system:index'));
+   date=date.slice(0, 4);
+   return img.select('LC_Type1').clip(aoi) // .clip(aoi)
+       .set('year', date);
+};
+
+var visualization = {
+  bands: ['Map'],
+};
+
+// Urban and rural pixel classification
+Map.centerObject(aoi);
+Map.addLayer(LC.clip(aoi), visualization, 'Landcover',false);
+
+// Urban and rural pixel classification
+var data=LC.clip(aoi);
+var urban=data.updateMask(data.eq(50));
+Map.addLayer(urban, {palette: 'red'}, 'Urban');
+
+var waterPixels=[70,80,90]//80: Permanent water bodies,70: Permanent water bodies,90: Herbaceous wetland
+var water=data.eq(ee.Image(waterPixels)).reduce('max');
+var waterbody=data.updateMask(water);
+Map.addLayer(waterbody, {palette: 'blue'}, 'Water');
+
+var vegetationPixels=[10,20,30,60,95]// 10: TreeCover,20: Shrubland,30: Grassland,60:sparse vegetation,95: Mangroves
+var vegetation=data.eq(ee.Image(vegetationPixels)).reduce('max');
+var vegetation_data=data.updateMask(vegetation);
+Map.addLayer(vegetation_data, {palette: 'green'}, 'Green');
+
+var cropPixels=[40]
+var crop=data.eq(ee.Image(cropPixels)).reduce('max');
+var crop_data=data.updateMask(crop);
+Map.addLayer(crop_data, {palette: 'yellow'}, 'Crop');
+
+var other=data.updateMask(data.eq(100));
+Map.addLayer(other, {palette: 'grey'}, 'Other');
+
+
+
